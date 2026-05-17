@@ -8,10 +8,10 @@ function getStorageData(key) {
     return data ? JSON.parse(data) : [];
 }
 
-// Optional shared database URL (Firebase Realtime Database REST endpoint)
-// Example: https://your-project-default-rtdb.firebaseio.com
-// Using free Firebase demo database for testing cross-browser sync
-const DEMO_SHARED_ENDPOINT = 'https://mineguard-demo-default-rtdb.firebaseio.com';
+// Optional shared database URL (JSONBin.io or Firebase Realtime Database REST endpoint)
+// Example JSONBin: https://api.jsonbin.io/v3/b/YOUR_BIN_ID
+// Example Firebase: https://your-project-default-rtdb.firebaseio.com
+const DEMO_SHARED_ENDPOINT = 'https://api.jsonbin.io/v3/b/6a094d96250b1311c360c7ce';
 
 function getCloudDatabaseUrl() {
     const runtimeValue = window.MINEGUARD_CLOUD_DB_URL;
@@ -88,7 +88,18 @@ async function fetchCloudData(key) {
     if (!baseUrl) return null;
 
     try {
-        const response = await fetch(`${baseUrl}/${key}.json`, {
+        let fetchUrl = baseUrl;
+        
+        // Handle both JSONBin and Firebase URL formats
+        if (baseUrl.includes('jsonbin.io')) {
+            // JSONBin: use base URL directly, no key appended
+            fetchUrl = baseUrl;
+        } else {
+            // Firebase: append key.json
+            fetchUrl = `${baseUrl}/${key}.json`;
+        }
+        
+        const response = await fetch(fetchUrl, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -106,7 +117,17 @@ async function fetchCloudData(key) {
             return null;
         }
 
-        const payload = await response.json();
+        let payload = await response.json();
+        
+        // Handle JSONBin response format (wraps data in record property)
+        if (baseUrl.includes('jsonbin.io') && payload.record) {
+            payload = payload.record;
+        }
+        
+        // Extract the specific key from the data
+        if (baseUrl.includes('jsonbin.io')) {
+            payload = payload[key] || [];
+        }
         
         // Firebase returns null for non-existent paths
         if (payload === null) {
@@ -125,12 +146,27 @@ async function pushCloudData(key, data) {
     if (!baseUrl) return;
 
     try {
-        const response = await fetch(`${baseUrl}/${key}.json`, {
+        let fetchUrl = baseUrl;
+        let body;
+        
+        // Handle both JSONBin and Firebase URL formats
+        if (baseUrl.includes('jsonbin.io')) {
+            // JSONBin: need to push entire object with both users and reports
+            const users = key === 'users' ? data : getStorageData('users');
+            const reports = key === 'reports' ? data : getStorageData('reports');
+            body = JSON.stringify({ users, reports });
+        } else {
+            // Firebase: push individual key
+            fetchUrl = `${baseUrl}/${key}.json`;
+            body = JSON.stringify(Array.isArray(data) ? data : []);
+        }
+        
+        const response = await fetch(fetchUrl, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(Array.isArray(data) ? data : [])
+            body: body
         });
 
         if (!response.ok) {
@@ -312,9 +348,13 @@ function initializeCloudSync() {
     if (!isCloudSyncEnabled()) {
         console.info('Cloud sync disabled. Set window.MINEGUARD_CLOUD_DB_URL for multi-device syncing.');
         updateSyncStatusDisplay();
+        // Setup localStorage cross-tab sync as fallback
+        setupLocalStorageSync();
         return;
     }
 
+    console.info('Cloud sync enabled. Starting sync...');
+    
     syncCloudData().then(() => {
         refreshVisibleReportViews();
     });
@@ -350,6 +390,16 @@ function initializeCloudSync() {
     });
 }
 
+function setupLocalStorageSync() {
+    // Listen for localStorage changes from other tabs (cross-tab sync fallback)
+    window.addEventListener('storage', (event) => {
+        if (event.key === 'reports' || event.key === 'users') {
+            console.info(`Cross-tab sync detected for ${event.key}`);
+            refreshVisibleReportViews();
+        }
+    });
+}
+
 function saveStorageData(key, data) {
     localStorage.setItem(key, JSON.stringify(data));
     queueCloudPush(key, data);
@@ -373,10 +423,10 @@ function isAdmin() {
 // ============================
 
 document.addEventListener('DOMContentLoaded', function () {
-    // Enable demo mode by default if cloud sync is not configured
+    // Enable demo mode by default to use JSONBin.io cloud sync
     if (!localStorage.getItem('mineguardDemoMode') && !localStorage.getItem('mineguardCloudDbUrl')) {
         localStorage.setItem('mineguardDemoMode', 'true');
-        console.log('Demo mode auto-enabled for cloud sync');
+        console.log('Demo mode auto-enabled - using JSONBin.io for cloud sync');
     }
     
     initializeAdminAccount();
