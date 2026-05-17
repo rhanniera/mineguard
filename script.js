@@ -363,7 +363,12 @@ function initializeCloudSync() {
 
     console.info('Cloud sync enabled. Starting sync...');
     
+    // Force immediate sync to ensure admin user and all data is pushed to cloud
+    // This is critical to prevent sync conflicts when multiple users interact
     syncCloudData().then(() => {
+        console.log('Initial cloud sync completed');
+        // Clear the admin sync flag after successful sync
+        localStorage.removeItem('adminSyncRequired');
         refreshVisibleReportViews();
     });
 
@@ -371,6 +376,7 @@ function initializeCloudSync() {
         clearInterval(cloudSyncState.pollIntervalId);
     }
 
+    // Poll cloud for changes every 7 seconds
     cloudSyncState.pollIntervalId = setInterval(() => {
         syncCloudData().then(() => {
             refreshVisibleReportViews();
@@ -470,6 +476,10 @@ function initializeAdminAccount() {
         users.push(adminUser);
         saveStorageData('users', users);
         console.log('Admin account created: admin@admin.com');
+        
+        // Ensure admin user is synced to cloud immediately before other operations
+        // This prevents sync conflicts when other users create accounts
+        localStorage.setItem('adminSyncRequired', 'true');
     }
 }
 
@@ -701,6 +711,12 @@ function handleSignup(e) {
     users.push(newUser);
     saveStorageData('users', users);
     
+    // Force immediate sync to cloud so admin can see new user
+    if (isCloudSyncEnabled()) {
+        console.log('New user registered: forcing cloud sync');
+        syncCloudData();
+    }
+    
     setCurrentUser(newUser);
     showToast('Account created successfully!', 'success');
     
@@ -808,6 +824,11 @@ function handleReportSubmit(e) {
     const reports = getStorageData('reports');
     reports.push(newReport);
     saveStorageData('reports', reports);
+    
+    // Force immediate sync to cloud to ensure report is immediately visible to admin
+    if (isCloudSyncEnabled()) {
+        syncCloudData();
+    }
     
     showToast('Hazard report submitted successfully!', 'success');
     document.getElementById('hazardForm').reset();
@@ -1258,6 +1279,13 @@ function loadAdminPanel() {
     }
     
     updateSyncStatusDisplay();
+    
+    // Force sync from cloud to ensure admin sees latest data from all users
+    // This is critical for seeing reports from other users
+    if (isCloudSyncEnabled()) {
+        console.log('Admin panel: Forcing cloud sync to fetch latest data from all users');
+        syncCloudData();
+    }
     
     const allReports = getStorageData('reports');
     const allUsers = getStorageData('users');
